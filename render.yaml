@@ -1,0 +1,104 @@
+services:
+  - type: web
+    name: nexora-saleslead-api
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: TIMEZONE
+        value: Africa/Lagos
+      - key: ENVIRONMENT
+        value: production
+      - key: REPORT_OUTPUT_DIR
+        value: uploads/reports
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DAILY_SCHOOL_COUNT
+        value: "15"
+      - key: DAILY_SOLAR_COUNT
+        value: "15"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      - key: ADMIN_TELEGRAM_ID
+        sync: false
+      - key: ADMIN_CHANNEL_ID
+        sync: false
+      - key: CUSTOMER_CARE_TELEGRAM_ID
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: OPENAI_EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_SCHEMA
+        value: nexora_saleslead
+      - key: REDIS_URL
+        sync: false
+      - key: APIFY_API_KEY
+        sync: false
+      - key: APIFY_GOOGLE_MAPS_ACTOR_ID
+        value: compass/crawler-google-places
+      - key: SENTRY_DSN
+        sync: false
+
+  - type: cron
+    name: nexora-saleslead-weekday-leads
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scripts/run_daily_once.py
+    schedule: "0 8 * * 1-5"
+    envVars:
+      - key: TIMEZONE
+        value: Africa/Lagos
+      - key: ENVIRONMENT
+        value: production
+      - key: REPORT_OUTPUT_DIR
+        value: uploads/reports
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DAILY_SCHOOL_COUNT
+        value: "15"
+      - key: DAILY_SOLAR_COUNT
+        value: "15"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      - key: ADMIN_TELEGRAM_ID
+        sync: false
+      - key: ADMIN_CHANNEL_ID
+        sync: false
+      - key: CUSTOMER_CARE_TELEGRAM_ID
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: OPENAI_EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_SCHEMA
+        value: nexora_saleslead
+      - key: REDIS_URL
+        sync: false
+      - key: APIFY_API_KEY
+        sync: false
+      - key: APIFY_GOOGLE_MAPS_ACTOR_ID
+        value: compass/crawler-google-places
+      - key: SENTRY_DSN
+        sync: false
