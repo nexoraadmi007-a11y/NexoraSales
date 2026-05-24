@@ -17,6 +17,8 @@ services:
         value: "15"
       - key: DAILY_SOLAR_COUNT
         value: "15"
+      - key: PYTHON_VERSION
+        value: 3.12.10
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_BOT_USERNAME
@@ -70,6 +72,8 @@ services:
         value: "15"
       - key: DAILY_SOLAR_COUNT
         value: "15"
+      - key: PYTHON_VERSION
+        value: 3.12.10
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_BOT_USERNAME
