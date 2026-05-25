@@ -8,6 +8,15 @@ from src.config.settings import Settings
 from src.models.schemas import DailyLeadReport
 
 
+class TelegramDeliveryError(RuntimeError):
+    def __init__(self, method: str, chat_id: str, status_code: int, description: str):
+        chat_tail = chat_id[-4:] if chat_id else "none"
+        super().__init__(
+            f"Telegram {method} failed for chat ending {chat_tail}: "
+            f"{status_code} {description}"
+        )
+
+
 class DirectTelegramDelivery:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -22,25 +31,39 @@ class DirectTelegramDelivery:
             solar=report.solar_count,
             delivered_to=self.settings.lead_delivery_chat_id,
         )
-        message_id = await self.send_report_file(file_path, customer_summary)
-        await self.notify_admin(admin_summary)
+        try:
+            message_id = await self.send_report_file(file_path, customer_summary)
+        except TelegramDeliveryError as exc:
+            await self._send_admin_fallback(file_path, report, exc)
+            return None
+
+        await self._notify_admin_best_effort(admin_summary)
         return message_id
 
     async def send_report_file(self, file_path: str, summary: str) -> int | None:
         target_chat_id = self.settings.lead_delivery_chat_id
         if not target_chat_id:
             raise RuntimeError("CUSTOMER_CARE_TELEGRAM_ID is required for report delivery.")
+        return await self.send_report_file_to_chat(
+            chat_id=target_chat_id,
+            file_path=file_path,
+            summary=summary,
+            caption="Professional Excel lead report attached.",
+        )
+
+    async def send_report_file_to_chat(self, chat_id: str, file_path: str, summary: str, caption: str) -> int | None:
         path = Path(file_path)
         async with httpx.AsyncClient(timeout=120) as client:
-            message = await client.post(
-                f"{self.base_url}/sendMessage",
-                data={"chat_id": target_chat_id, "text": summary},
+            await self._post_telegram(
+                client,
+                "sendMessage",
+                data={"chat_id": chat_id, "text": summary},
             )
-            message.raise_for_status()
             with path.open("rb") as handle:
-                document = await client.post(
-                    f"{self.base_url}/sendDocument",
-                    data={"chat_id": target_chat_id, "caption": "Professional Excel lead report attached."},
+                document = await self._post_telegram(
+                    client,
+                    "sendDocument",
+                    data={"chat_id": chat_id, "caption": caption},
                     files={
                         "document": (
                             path.name,
@@ -49,19 +72,71 @@ class DirectTelegramDelivery:
                         )
                     },
                 )
-            document.raise_for_status()
             return document.json()["result"]["message_id"]
 
     async def notify_admin(self, text: str) -> None:
-        admin_chat_id = self.settings.admin_telegram_id or self.settings.admin_channel_id
+        admin_chat_id = self._admin_chat_id()
         if not admin_chat_id:
             return
         async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                f"{self.base_url}/sendMessage",
+            await self._post_telegram(
+                client,
+                "sendMessage",
                 data={"chat_id": admin_chat_id, "text": text},
             )
-            response.raise_for_status()
+
+    async def _send_admin_fallback(self, file_path: str, report: DailyLeadReport, error: TelegramDeliveryError) -> None:
+        admin_chat_id = self._admin_chat_id()
+        if not admin_chat_id:
+            raise error
+        alert = (
+            "NEXORA CUSTOMER-CARE DELIVERY FAILED\n\n"
+            f"Date: {report.date.strftime('%Y-%m-%d')}\n"
+            f"Total Leads Generated: {len(report.leads)}\n"
+            f"Schools: {report.school_count}\n"
+            f"Solar Companies: {report.solar_count}\n\n"
+            f"Reason: {error}\n\n"
+            "Emergency fallback: the Excel lead report is attached here for admin review.\n"
+            "Ask customer care to open @NexoraSalesbot and press Start, then confirm the Telegram ID."
+        )
+        await self.send_report_file_to_chat(
+            chat_id=admin_chat_id,
+            file_path=file_path,
+            summary=alert,
+            caption="Fallback Excel lead report attached.",
+        )
+
+    async def _notify_admin_best_effort(self, text: str) -> None:
+        try:
+            await self.notify_admin(text)
+        except TelegramDeliveryError:
+            return
+
+    async def _post_telegram(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        *,
+        data: dict[str, str],
+        files: dict | None = None,
+    ) -> httpx.Response:
+        response = await client.post(f"{self.base_url}/{method}", data=data, files=files)
+        if response.is_success:
+            return response
+        description = self._telegram_error_description(response)
+        raise TelegramDeliveryError(method, str(data.get("chat_id", "")), response.status_code, description)
+
+    @staticmethod
+    def _telegram_error_description(response: httpx.Response) -> str:
+        try:
+            payload = response.json()
+        except ValueError:
+            return response.text[:200] or "unknown Telegram error"
+        description = payload.get("description") if isinstance(payload, dict) else None
+        return str(description or "unknown Telegram error")
+
+    def _admin_chat_id(self) -> str:
+        return self.settings.admin_telegram_id or self.settings.admin_channel_id
 
     def _customer_summary(self, report: DailyLeadReport) -> str:
         top = sorted(report.leads, key=lambda lead: lead.lead_score, reverse=True)[:5]

@@ -88,10 +88,10 @@ class DailyLeadDeliveryService:
                 return await self.telegram_bot.send_daily_report(file_path, report)
             except Exception as exc:
                 last_error = exc
-                self.repository.log_activity("telegram_delivery_retry", "Retrying Telegram report delivery", {"attempt": attempt, "error": str(exc)})
+                self.repository.log_activity("telegram_delivery_retry", "Retrying Telegram report delivery", {"attempt": attempt, "error": self._safe_error(exc)})
         if self.settings.admin_telegram_id:
-            await self.telegram_bot.notify_admin(f"NEXORA daily report delivery failed after retries: {last_error}")
-        raise RuntimeError(f"Telegram delivery failed after retries: {last_error}")
+            await self.telegram_bot.notify_admin(f"NEXORA daily report delivery failed after retries: {self._safe_error(last_error)}")
+        raise RuntimeError(f"Telegram delivery failed after retries: {self._safe_error(last_error)}")
 
     async def _send_existing_with_retry(self, db_report: dict) -> int | None:
         summary = (
@@ -108,10 +108,14 @@ class DailyLeadDeliveryService:
                 return await self.telegram_bot.send_report_file(db_report["file_path"], summary)
             except Exception as exc:
                 last_error = exc
-                self.repository.log_activity("telegram_delivery_retry", "Retrying existing Telegram report delivery", {"attempt": attempt, "error": str(exc)})
+                self.repository.log_activity("telegram_delivery_retry", "Retrying existing Telegram report delivery", {"attempt": attempt, "error": self._safe_error(exc)})
+
+        fallback_message_id = await self._send_existing_report_to_admin_fallback(db_report, self._safe_error(last_error))
+        if fallback_message_id is not None:
+            return fallback_message_id
         if self.settings.admin_telegram_id:
-            await self.telegram_bot.notify_admin(f"NEXORA existing report delivery failed after retries: {last_error}")
-        raise RuntimeError(f"Telegram existing report delivery failed after retries: {last_error}")
+            await self.telegram_bot.notify_admin(f"NEXORA existing report delivery failed after retries: {self._safe_error(last_error)}")
+        raise RuntimeError(f"Telegram existing report delivery failed after retries: {self._safe_error(last_error)}")
 
     def summary_message(self, report: DailyLeadReport) -> str:
         top = sorted(report.leads, key=lambda lead: lead.lead_score, reverse=True)[:3]
@@ -135,3 +139,38 @@ class DailyLeadDeliveryService:
             f"Delivered To Customer Care: {self.settings.lead_delivery_chat_id}\n\n"
             "Excel file was sent to customer care for calling."
         )
+
+    async def _send_existing_report_to_admin_fallback(self, db_report: dict, reason: str) -> int | None:
+        admin_chat_id = self.settings.admin_telegram_id or self.settings.admin_channel_id
+        if not admin_chat_id or not hasattr(self.telegram_bot, "send_report_file_to_chat"):
+            return None
+        summary = (
+            "NEXORA CUSTOMER-CARE DELIVERY FAILED\n\n"
+            f"Date: {db_report['report_date']}\n"
+            f"Total Leads Generated: {db_report['total_leads']}\n"
+            f"Schools: {db_report['school_count']}\n"
+            f"Solar Companies: {db_report['solar_count']}\n\n"
+            f"Reason: {reason}\n\n"
+            "Emergency fallback: the Excel lead report is attached here for admin review.\n"
+            "Ask customer care to open @NexoraSalesbot and press Start, then confirm the Telegram ID."
+        )
+        try:
+            return await self.telegram_bot.send_report_file_to_chat(
+                admin_chat_id,
+                db_report["file_path"],
+                summary,
+                "Fallback Excel lead report attached.",
+            )
+        except Exception as exc:
+            self.repository.log_activity(
+                "telegram_admin_fallback_failed",
+                "Admin fallback delivery failed",
+                {"error": self._safe_error(exc)},
+            )
+            return None
+
+    def _safe_error(self, exc: Exception | None) -> str:
+        text = str(exc or "unknown error")
+        if self.settings.telegram_bot_token:
+            text = text.replace(self.settings.telegram_bot_token, "[telegram-token]")
+        return text.replace(self.telegram_bot.delivery.base_url, "https://api.telegram.org/bot[telegram-token]") if hasattr(self.telegram_bot, "delivery") else text

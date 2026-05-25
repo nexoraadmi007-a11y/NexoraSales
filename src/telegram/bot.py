@@ -62,10 +62,13 @@ class NexoraTelegramBot:
     async def send_report_file(self, file_path: str, summary: str) -> int | None:
         return await self.delivery.send_report_file(file_path, summary)
 
+    async def send_report_file_to_chat(self, chat_id: str, file_path: str, summary: str, caption: str) -> int | None:
+        return await self.delivery.send_report_file_to_chat(chat_id, file_path, summary, caption)
+
     async def notify_admin(self, text: str) -> None:
         try:
             await self.delivery.notify_admin(text)
-        except TelegramError as exc:
+        except Exception as exc:
             logger.error("Admin notification failed", extra={"error": str(exc)})
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
