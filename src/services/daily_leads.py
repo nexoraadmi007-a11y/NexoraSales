@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -73,7 +74,9 @@ class DailyLeadDeliveryService:
             self.repository.log_activity("daily_report_delivered", "Daily lead report delivered to Telegram", {"report_id": db_report["id"], "leads": len(saved)})
             return {"status": "delivered", "leads": len(scored), "file_path": file_path}
         except Exception as exc:
-            self.repository.log_activity("daily_report_failed", "Daily lead report failed", {"error": str(exc)})
+            safe_error = self._safe_error(exc)
+            self.repository.log_activity("daily_report_failed", "Daily lead report failed", {"error": safe_error})
+            await self._notify_admin_job_failure(now, safe_error)
             raise
         finally:
             if redis_available and redis_client:
@@ -169,8 +172,31 @@ class DailyLeadDeliveryService:
             )
             return None
 
+    async def _notify_admin_job_failure(self, report_time: datetime, reason: str) -> None:
+        message = (
+            "NEXORA DAILY LEADS FAILED\n\n"
+            f"Date: {report_time.date().isoformat()}\n"
+            "Excel Generated: No\n\n"
+            f"Reason: {reason}\n\n"
+            "Action Required: check Apify billing/credits or replace APIFY_API_KEY, then rerun the daily job."
+        )
+        try:
+            await self.telegram_bot.notify_admin(message)
+        except Exception as exc:
+            self.repository.log_activity(
+                "admin_failure_notification_failed",
+                "Admin failure notification could not be sent",
+                {"error": self._safe_error(exc)},
+            )
+
     def _safe_error(self, exc: Exception | None) -> str:
         text = str(exc or "unknown error")
         if self.settings.telegram_bot_token:
             text = text.replace(self.settings.telegram_bot_token, "[telegram-token]")
-        return text.replace(self.telegram_bot.delivery.base_url, "https://api.telegram.org/bot[telegram-token]") if hasattr(self.telegram_bot, "delivery") else text
+        if self.settings.apify_api_key:
+            text = text.replace(self.settings.apify_api_key, "[apify-token]")
+        text = re.sub(r"bot[0-9]+:[A-Za-z0-9_-]+", "bot[telegram-token]", text)
+        text = re.sub(r"apify_api_[A-Za-z0-9]+", "[apify-token]", text)
+        if hasattr(self.telegram_bot, "delivery"):
+            text = text.replace(self.telegram_bot.delivery.base_url, "https://api.telegram.org/bot[telegram-token]")
+        return text

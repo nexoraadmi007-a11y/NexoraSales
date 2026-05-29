@@ -73,21 +73,33 @@ class ApifyLeadScraper:
                 f"https://api.apify.com/v2/acts/{actor}/runs?token={token}",
                 json=payload,
             )
-            run.raise_for_status()
+            self._raise_for_apify_error(run, "actor start")
             run_id = run.json()["data"]["id"]
             for _ in range(60):
                 status = await client.get(f"https://api.apify.com/v2/actor-runs/{run_id}?token={token}")
-                status.raise_for_status()
+                self._raise_for_apify_error(status, "actor status")
                 data = status.json()["data"]
                 if data["status"] == "SUCCEEDED":
                     dataset_id = data["defaultDatasetId"]
                     items = await client.get(f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={token}&clean=true")
-                    items.raise_for_status()
+                    self._raise_for_apify_error(items, "dataset fetch")
                     return items.json()
                 if data["status"] in {"FAILED", "ABORTED", "TIMED-OUT"}:
                     raise RuntimeError(f"Apify actor failed: {data['status']}")
                 await asyncio.sleep(5)
         raise TimeoutError(f"Apify actor did not finish for query: {query}")
+
+    @staticmethod
+    def _raise_for_apify_error(response: httpx.Response, operation: str) -> None:
+        if response.is_success:
+            return
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        error = payload.get("error", {}) if isinstance(payload, dict) else {}
+        message = error.get("message") if isinstance(error, dict) else None
+        raise RuntimeError(f"Apify {operation} failed: {response.status_code} {message or response.reason_phrase}")
 
     def _normalize(self, row: dict[str, Any], industry: Industry, fallback_location: str) -> LeadCandidate | None:
         name = row.get("title") or row.get("name") or row.get("businessName")
